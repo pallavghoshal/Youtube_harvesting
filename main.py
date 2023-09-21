@@ -233,6 +233,15 @@ if selected == "Extract and Transform":
                         t=tuple(i.values())
                         cursor.execute(query2,t)
                         conn.commit()
+          def insert_into_playlist():
+             col = db['playlist_details']
+             coll = db['channel_details']
+             query = """INSERT INTO yt_playlist VALUES(%s,%s,%s)"""
+             for i in coll.find({"channel_name" : user_inp},{'_id':0}):
+                  for j in col.find({'Channel_id': i['channel_id']},{'_id' : 0}):
+                       cursor.execute(query,tuple(i.values()))
+                       conn.commit()
+
         if st.button("Submit"):
             cursor.execute("SELECT channel_name FROM yt_channel")
                     # Fetch the results.
