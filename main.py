@@ -3,10 +3,11 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 from streamlit_option_menu import option_menu
-import pymysql
+import mysql.connector
 import pymongo
 from googleapiclient.discovery import build
 import datetime
+import logging
 import re
 # from PIL import Image
 # SETTING PAGE CONFIGURATIONS
@@ -31,11 +32,11 @@ client = pymongo.MongoClient(
     "mongodb+srv://ytharvesting:2v7lalqTcm9C4o3S@cluster0.goezfsa.mongodb.net/")
 db = client['youtube_data']
 # CONNECTING WITH MYSQL DATABASE
-conn = pymysql.connect(
+conn = mysql.connector.connect(
     host='localhost', user='root', password='2v7lalqTcm9C4o3S', database='youtube_data')
 cursor = conn.cursor()
 # BUILDING CONNECTION WITH YOUTUBE API
-api_key = "AIzaSyDosX4iLh2c6kP-erK3DYc3znOO1GwZfL0"
+api_key = "AIzaSyCmvBt6TF03_gAK0savUONhkkssNzlvLPc"
 youtube = build('youtube', 'v3', developerKey=api_key)
 # FUNCTION TO GET CHANNEL DETAILS
 
@@ -71,6 +72,28 @@ def iso8601_duration_to_seconds(duration):
     # Calculate the total duration in seconds
     total_seconds = hours * 3600 + minutes * 60 + seconds
     return total_seconds
+
+
+# def get_playlists(channel_id):
+#     play_ids = []
+#     res = youtube.channels().list(id=channel_id,
+#                                   part='contentDetails').execute()
+#     playlist_id = res['items'][0]['contentDetails']['relatedPlaylists']['uploads']
+#     next_page_token = None
+#     while True:
+#         res = youtube.playlistItems().list(playlistId=playlist_id,
+#                                            part='snippet',
+#                                            maxResults=50,
+#                                            pageToken=next_page_token).execute()
+
+#         for i in range(len(res['items'])):
+#             play_ids.append(res['items'][i]['snippet']
+#                             ['playlistId'])
+#         next_page_token = res.get('nextPageToken')
+
+#         if next_page_token is None:
+#             break
+#     return play_ids
 
 
 def get_channel_videos(channel_id):
@@ -114,27 +137,27 @@ def get_video_details(v_ids, channel_id):
             duration = video['contentDetails']['duration']
             duration_seconds = iso8601_duration_to_seconds(duration)
 
-            video_details = dict(Video_id=video['id'],
-                                 Playlist_id=playlist_id,
-                                 Video_Title=video['snippet']['title'],
-                                 Video_Description=video['snippet']['description'],
-                                 Published_date=published_date.strftime(
-                                     '%Y-%m-%d %H:%M:%S'),
-                                 View_count=int(
-                                     video['statistics'].get('viewCount', 0)),
-                                 Like_count=int(
-                                     video['statistics'].get('likeCount', 0)),
-                                 Dislike_count=0,
-                                 Favorite_count=int(
-                                     video['statistics']['favoriteCount']),
-                                 Comment_count=int(
-                                     video['statistics'].get('commentCount', 0)),
-                                 Duration=duration_seconds,
-                                 Thumbnail=video['snippet']['thumbnails']['default']['url'],
-                                 Caption_status=video['contentDetails']['caption']
-                                 )
-
-        video_stats.append(video_details)
+            video_details = dict(
+                Video_id=video['id'],
+                Playlist_id=playlist_id,
+                Channel_id=channel_id,
+                Video_Title=video['snippet']['title'],
+                Video_Description=video['snippet']['description'],
+                Published_date=published_date.strftime('%Y-%m-%d %H:%M:%S'),
+                View_count=int(
+                    video['statistics'].get('viewCount', 0)),
+                Like_count=int(
+                    video['statistics'].get('likeCount', 0)),
+                Dislike_count=0,
+                Favorite_count=int(
+                    video['statistics']['favoriteCount']),
+                Comment_count=int(
+                    video['statistics'].get('commentCount', 0)),
+                Duration=duration_seconds,
+                Thumbnail=video['snippet']['thumbnails']['default']['url'],
+                Caption_status=video['contentDetails']['caption']
+            )
+            video_stats.append(video_details)
     return video_stats
 
 # FUNCTION TO GET PLAYLIST DETAILS
@@ -151,7 +174,7 @@ def get_playlist_details(channel_id):
     for playlist in response["items"]:
         playlist_data = {
             "playlistid": playlist["id"],
-            "channel_id": playlist["snippet"]["channelId"],
+            "channel_id": channel_id,
             "playlist_name": playlist["snippet"]["title"]
         }
         playlists.append(playlist_data)
@@ -159,30 +182,49 @@ def get_playlist_details(channel_id):
 
 
 # FUNCTION TO GET COMMENT DETAILS
+
+# Set up logging
+logging.basicConfig(filename='comments.log', level=logging.INFO,
+                    format='%(asctime)s - %(levelname)s: %(message)s')
+
+
 def get_comments_details(v_id):
     comment_data = []
     try:
         next_page_token = None
         while True:
-            response = youtube.commentThreads().list(part="snippet,replies",
-                                                     videoId=v_id,
-                                                     maxResults=50,
-                                                     textFormat="plainText",
-                                                     pageToken=next_page_token).execute()
-            for cmt in response['items']:
-                data = dict(Comment_id=cmt['id'],
-                            Video_id=cmt['snippet']['videoId'],
-                            Comment_text=cmt['snippet']['topLevelComment']['snippet']['textDisplay'],
-                            Comment_author=cmt['snippet']['topLevelComment']['snippet']['authorDisplayName'],
-                            Comment_published_date=cmt['snippet']['topLevelComment']['snippet']['publishedAt'],
-                            )
+            response = youtube.commentThreads().list(
+                part="snippet,replies",
+                videoId=v_id,
+                maxResults=50,
+                textFormat="plainText",
+                pageToken=next_page_token
+            ).execute()
+
+            for cmt in response.get('items', []):
+                published_at = cmt['snippet']['topLevelComment']['snippet']['publishedAt']
+                published_date = datetime.datetime.strptime(
+                    published_at, '%Y-%m-%dT%H:%M:%SZ')
+
+                data = dict(
+                    Comment_id=cmt['id'],
+                    Video_id=cmt['snippet']['videoId'],
+                    Comment_text=cmt['snippet']['topLevelComment']['snippet']['textDisplay'],
+                    Comment_author=cmt['snippet']['topLevelComment']['snippet']['authorDisplayName'],
+                    Comment_published_date=published_date.strftime(
+                        '%Y-%m-%d %H:%M:%S')
+                )
                 comment_data.append(data)
+
             next_page_token = response.get('nextPageToken')
-            if next_page_token is None:
+            if not next_page_token:
                 break
-    except:
-        pass
+
+    except Exception as e:
+        logging.error(f"Error fetching comments for video {v_id}: {e}")
+
     return comment_data
+
 # FUNCTION TO GET CHANNEL NAMES FROM MONGODB
 
 
@@ -235,8 +277,16 @@ if selected == "Extract and Transform":
                 def comments():
                     com_d = []
                     for i in v_ids:
-                        com_d += get_comments_details(i)
+                        result = get_comments_details(i)
+                        if isinstance(result, list):
+                            com_d += result
+                        else:
+                            # Handle cases where get_comments_details returns something other than a list
+                            print(
+                                f"Unexpected result from get_comments_details for video {i}: {result}")
+
                     return com_d
+
                 comm_details = comments()
                 collections1 = db.channel_details
                 collections1.insert_many(ch_details)
@@ -272,7 +322,7 @@ if selected == "Extract and Transform":
 
         def insert_into_videos():
             collectionss = db['video_details']
-            query1 = """INSERT IGNORE INTO yt_video VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)"""
+            query1 = """INSERT IGNORE INTO yt_video VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, %s)"""
             for i in collectionss.find():
                 i.pop("_id")
                 cursor.execute(query1, tuple(i.values()))
@@ -333,22 +383,23 @@ if selected == "View":
                               '10. Which videos have the highest number of comments, and what are their corresponding channel names?'])
 
     if questions == '1. What are the names of all the videos and their corresponding channels?':
-        cursor.execute(
-            """SELECT
-    v.video_name AS Video_Name,
-    c.channel_name AS Channel_Name
-FROM
-    yt_video v
-JOIN
-    yt_channel c ON v.playlist_id = c.channel_id;""")
-        df = pd.DataFrame(cursor.fetchall(), columns=cursor.column_names)
-        st.write(df)
+        try:
+            cursor.execute("""SELECT v.video_name AS Video_Name, c.channel_name AS Channel_Name
+                            FROM yt_video v
+                            JOIN yt_channel c ON v.channel_id = c.channel_id;""")
+            df = pd.DataFrame(cursor.fetchall(), columns=cursor.column_names)
+            st.write(df)
+        except Exception as e:
+            st.write(f"Error: {str(e)}")
 
     elif questions == '2. Which channels have the most number of videos, and how many videos do they have?':
-        cursor.execute("""SELECT channel_name 
-        AS Channel_Name, video_count AS Total_Videos
-                            FROM yt_channel
-                            ORDER BY total_videos DESC""")
+        cursor.execute("""SELECT c.channel_name AS Channel_Name, c.video_count AS Video_Count
+                        FROM yt_channel c
+                        LEFT JOIN yt_video v ON c.channel_id = v.channel_id
+                        GROUP BY c.channel_name
+                        ORDER BY Video_Count DESC
+                        LIMIT 1;
+                        """)
         df = pd.DataFrame(cursor.fetchall(), columns=cursor.column_names)
         st.write(df)
         st.write("### :green[Number of videos in each channel :]")
@@ -362,10 +413,13 @@ JOIN
         st.plotly_chart(fig, use_container_width=True)
 
     elif questions == '3. What are the top 10 most viewed videos and their respective channels?':
-        cursor.execute("""SELECT channel_name AS Channel_Name, video_name AS Video_Title, view_count AS Views 
-                            FROM yt_video
-                            ORDER BY view_count DESC
-                            LIMIT 10""")
+        cursor.execute("""SELECT v.video_name AS Video_Name, c.channel_name AS Channel_Name, v.view_count AS View_Count
+                        FROM yt_video v
+                        JOIN yt_playlist p ON v.playlist_id = p.playlist_id
+                        JOIN yt_channel c ON p.channel_id = c.channel_id
+                        ORDER BY View_Count DESC
+                        LIMIT 10;
+                        """)
         df = pd.DataFrame(cursor.fetchall(), columns=cursor.column_names)
         st.write(df)
         st.write("### :green[Top 10 most viewed videos :]")
@@ -378,20 +432,20 @@ JOIN
         st.plotly_chart(fig, use_container_width=True)
 
     elif questions == '4. How many comments were made on each video, and what are their corresponding video names?':
-        cursor.execute("""SELECT a.video_id AS Video_id, a.video_name AS Video_Title, b.comment_count
-                            FROM yt_video AS a
-                            LEFT JOIN (SELECT video_id,COUNT(comment_id) AS Total_Comments
-                            FROM yt_comment GROUP BY video_id) AS b
-                            ON a.video_id = b.video_id
-                            ORDER BY b.Total_Comments DESC""")
+        cursor.execute("""SELECT v.video_name AS Video_Name, v.comment_count AS Comment_Count
+FROM yt_video v;
+""")
         df = pd.DataFrame(cursor.fetchall(), columns=cursor.column_names)
         st.write(df)
 
     elif questions == '5. Which videos have the highest number of likes, and what are their corresponding channel names?':
-        cursor.execute("""SELECT channel_name AS Channel_Name,video_name AS Title,like_count AS Likes_Count 
-                            FROM videos
-                            ORDER BY like_count DESC
-                            LIMIT 10""")
+        cursor.execute("""SELECT v.video_name AS Video_Name, c.channel_name AS Channel_Name, v.like_count AS Like_Count
+                        FROM yt_video v
+                        JOIN yt_playlist p ON v.playlist_id = p.playlist_id
+                        JOIN yt_channel c ON p.channel_id = c.channel_id
+                        ORDER BY Like_Count DESC
+                        LIMIT 10;
+                        """)
         df = pd.DataFrame(cursor.fetchall(), columns=cursor.column_names)
         st.write(df)
         st.write("### :green[Top 10 most liked videos :]")
@@ -404,16 +458,20 @@ JOIN
         st.plotly_chart(fig, use_container_width=True)
 
     elif questions == '6. What is the total number of likes and dislikes for each video, and what are their corresponding video names?':
-        cursor.execute("""SELECT video_name AS Title, like_count AS Likes_Count
-                            FROM yt_video
-                            ORDER BY like_count DESC""")
+        cursor.execute("""SELECT v.video_name AS Video_Name, SUM(v.like_count) AS Total_Likes, SUM(v.dislike_count) AS Total_Dislikes
+                        FROM yt_video v
+                        GROUP BY v.video_name;
+                        """)
         df = pd.DataFrame(cursor.fetchall(), columns=cursor.column_names)
         st.write(df)
 
     elif questions == '7. What is the total number of views for each channel, and what are their corresponding channel names?':
-        cursor.execute("""SELECT channel_name AS Channel_Name, view_count AS Views
-                            FROM yt_channel
-                            ORDER BY view_count DESC""")
+        cursor.execute("""SELECT c.channel_name AS Channel_Name, SUM(v.view_count) AS Total_Views
+                        FROM yt_channel c
+                        LEFT JOIN yt_playlist p ON c.channel_id = p.channel_id
+                        LEFT JOIN yt_video v ON p.playlist_id = v.playlist_id
+                        GROUP BY c.channel_name;
+                        """)
         df = pd.DataFrame(cursor.fetchall(), columns=cursor.column_names)
         st.write(df)
         st.write("### :green[Channels vs Views :]")
@@ -426,20 +484,22 @@ JOIN
         st.plotly_chart(fig, use_container_width=True)
 
     elif questions == '8. What are the names of all the channels that have published videos in the year 2022?':
-        cursor.execute("""SELECT channel_name AS Channel_Name
-                            FROM yt_video
-                            WHERE published_date LIKE '2022%'
-                            GROUP BY channel_name
-                            ORDER BY channel_name""")
+        cursor.execute("""SELECT DISTINCT c.channel_name AS Channel_Name
+                        FROM yt_channel c
+                        JOIN yt_playlist p ON c.channel_id = p.channel_id
+                        JOIN yt_video v ON p.playlist_id = v.playlist_id
+                        WHERE YEAR(v.published_date) = 2022;
+                        """)
         df = pd.DataFrame(cursor.fetchall(), columns=cursor.column_names)
         st.write(df)
 
     elif questions == '9. What is the average duration of all videos in each channel, and what are their corresponding channel names?':
-        cursor.execute("""SELECT channel_name AS Channel_Name,
-                            AVG(duration)/60 AS "Average_Video_Duration (mins)"
-                            FROM yt_video
-                            GROUP BY channel_name
-                            ORDER BY AVG(duration)/60 DESC""")
+        cursor.execute("""SELECT c.channel_name AS Channel_Name, AVG(v.duration) AS Average_Duration
+FROM yt_channel c
+LEFT JOIN yt_playlist p ON c.channel_id = p.channel_id
+LEFT JOIN yt_video v ON p.playlist_id = v.playlist_id
+GROUP BY c.channel_name;
+""")
         df = pd.DataFrame(cursor.fetchall(), columns=cursor.column_names)
         cursor.execute("""SELECT channel_name, 
                         SUM(duration_sec) / COUNT(*) AS average_duration
@@ -477,10 +537,13 @@ JOIN
         st.write("### :green[Average video duration for channels :]")
 
     elif questions == '10. Which videos have the highest number of comments, and what are their corresponding channel names?':
-        cursor.execute("""SELECT channel_name AS Channel_Name,video_id AS Video_ID,comment_count AS Comments
-                            FROM yt_video
-                            ORDER BY comment_count DESC
-                            LIMIT 10""")
+        cursor.execute("""SELECT v.video_name AS Video_Name, c.channel_name AS Channel_Name, v.comment_count AS Comment_Count
+                FROM yt_video v
+                JOIN yt_playlist p ON v.playlist_id = p.playlist_id
+                JOIN yt_channel c ON p.channel_id = c.channel_id
+                ORDER BY Comment_Count DESC
+                LIMIT 10;
+                """)
         df = pd.DataFrame(cursor.fetchall(), columns=cursor.column_names)
         st.write(df)
         st.write("### :green[Videos with most comments :]")
